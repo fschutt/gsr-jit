@@ -1,15 +1,13 @@
+#![feature(alloc_system)]
+extern crate alloc_system;
 extern crate libc;
 extern crate page_size;
 
 use std::ptr;
 use std::ops::{Index, IndexMut};
 
-extern {
-    fn memset(s: *mut libc::c_void, c: libc::uint32_t, n: libc::size_t) -> *mut libc::c_void;
-}
-
-/// breakpoint / halt asm instruction
-const ASM_BREAK: libc::uint32_t = 0xCC;
+#[cfg(target_os = "windows")]
+extern crate winapi;
 
 #[derive(Debug)]
 struct JitMemory {
@@ -23,13 +21,29 @@ struct JitMemory {
     memory_ptr: *mut u8,
 }
 
-impl JitMemory {
-    pub fn new(num_pages: usize) -> Option<JitMemory> {
-        
-        let page_size = page_size::get();
+struct JitSetup {
+    page_size: usize,
+    allocation_size_in_bytes: usize,
+    memory_ptr: *mut libc::c_void,
+}
 
+impl JitMemory {
+
+    fn pre_setup(num_pages: usize) -> JitSetup {
+        let page_size = page_size::get();
         let allocation_size_in_bytes = num_pages * page_size;
-        let mut memory_ptr: *mut libc::c_void = ptr::null_mut();
+        let ptr = ptr::null_mut();
+        JitSetup {
+            page_size: page_size,
+            allocation_size_in_bytes: allocation_size_in_bytes,
+            memory_ptr: ptr,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn new(num_pages: usize) -> Option<JitMemory> {
+        let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } = 
+            Self::pre_setup(num_pages);
         
         let alloc_error = unsafe {
           libc::posix_memalign(&mut memory_ptr, page_size::get(), allocation_size_in_bytes)
@@ -52,27 +66,55 @@ impl JitMemory {
             return None;
         }
 
-        let mprotect_err;
-        unsafe {
-/*
-            mprotect_err = libc::mprotect(memory_ptr, allocation_size_in_bytes, 
-                               libc::PROT_EXEC | libc::PROT_READ | libc::PROT_WRITE);
-*/
-            mprotect_err = libc::mprotect(memory_ptr, allocation_size_in_bytes, 
-                               libc::PROT_EXEC | libc::PROT_WRITE);
-        }
+        let mprotect_err = unsafe {
+            libc::mprotect(memory_ptr, allocation_size_in_bytes, 
+                           libc::PROT_EXEC | libc::PROT_READ | libc::PROT_WRITE)
+        };
 
         if mprotect_err == -1 {
             println!("mprotect failed!");
+            unsafe { libc::free(memory_ptr) };
             return None;
         }
 
         // memset(3) should return the original pointer again
         // It is not important if this function actually succeeds,
         // if it doesn't, the pages are uninitialized
-        let ptr_memory_area = unsafe { memset(memory_ptr, ASM_BREAK, allocation_size_in_bytes) };
+        let ptr_memory_area = unsafe { libc::memset(memory_ptr, 0xCC, allocation_size_in_bytes) };
         if ptr_memory_area as usize != memory_ptr as usize {
             println!("warning: memset error!");
+        }
+
+        Some(JitMemory {
+            number_of_pages: num_pages,
+            page_size: page_size,
+            allocated_size: allocation_size_in_bytes,
+            memory_ptr: memory_ptr as *mut u8,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn new(num_pages: usize) -> Option<JitMemory> {
+        use winapi::um::memoryapi::{VirtualProtect, VirtualAlloc};
+        use winapi::um::winnt::{MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE};
+        
+        let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } = 
+            Self::pre_setup(num_pages);
+
+        let memory_ptr = VirtualAlloc(libc::NULL, allocation_size_in_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        if memory_ptr.is_null() {
+            println!("VirtualAlloc failed!");
+            return None;
+        }
+
+        let virtualprotect_err = unsafe {
+            VirtualProtect(memory_ptr, allocation_size_in_bytes, PAGE_EXECUTE_READWRITE, &mut 0 as *mut i32)
+        };
+
+        if virtualprotect_err == 0 {
+            println!("VirtualProtect failed!");
+            unsafe { libc::free(memory_ptr) };
+            return None;
         }
 
         Some(JitMemory {
@@ -113,8 +155,14 @@ impl JitMemory {
     pub fn dump_mem(&self) {
         use std::fmt::Write;
         let mut s = String::with_capacity(self.allocated_size);
+        let mut page_counter = 0;
         for i in 0..self.allocated_size {
-            if i != 0 && i % 32 == 0 {
+            if i % self.page_size == 0 {
+                let page_start = unsafe { self.memory_ptr.offset((page_counter * self.page_size) as isize) };
+                write!(&mut s, "\n>>>>> JIT memory - page {} @ 0x{:x}\n", page_counter, page_start as usize).unwrap();
+                page_counter += 1;
+            }
+            if i != 0 && i % 16 == 0 {
                 write!(&mut s, "\n").unwrap();
             }
             write!(&mut s, "{:02x} ", self[i]).unwrap();
@@ -122,15 +170,17 @@ impl JitMemory {
         println!("{}", s);
     }
 
+    pub fn load_assembly(&mut self, data: &AssemblyBuf) -> Result<(), AllocationError> {
+        let instructions_len = data.instructions.len();
+        if instructions_len > self.allocated_size {
+            Err(AllocationError::InstructionBufTooLarge)
+        } else {
+            unsafe { ptr::copy(data.instructions.as_ptr(), self.memory_ptr, instructions_len) };
+            Ok(())   
+        }
+    }
+
     pub fn get_entry_point_fn(&mut self) -> (fn() -> u8) {
-        assert!(self.allocated_size > 6);
-
-        self[0] = 0x55;                                         // push   rbp
-        self[1] = 0x48; self[2] = 0x89; self[3] = 0xE5;         // mov    rbp,rsp
-        self[4] = 0xB0; self[5] = 0x04;                         // mov    al,0x4
-        self[6] = 0x5D;                                         // pop    rbp
-        self[7] = 0xC3;                                         // ret
-
         unsafe { ::std::mem::transmute(self.memory_ptr) }
     }
 }
@@ -165,15 +215,32 @@ impl Drop for JitMemory {
     }
 }
 
+pub struct AssemblyBuf {
+    pub instructions: Vec<u8>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum AllocationError {
+    /// Instructions are too big to fit in the allocated JIT memory
+    InstructionBufTooLarge,
+}
+
 fn main() {
+    let buf = AssemblyBuf {
+        instructions: vec![
+            0x55,                     // push   rbp
+            0x48, 0x89, 0xE5,         // mov    rbp,rsp
+            0xB0, 0x04,               // mov    al,0x4
+            0x5D,                     // pop    rbp
+            0xC3,                     // ret
+        ],
+    };
     let mut jit = JitMemory::new(1).unwrap();
-    
-    let entry_point = jit.get_entry_point_fn();
+    jit.load_assembly(&buf).unwrap();
 
-    // should print "4"
-    println!("the returned value is: {:x}", entry_point());
-
-    println!("memory dump:");
-    // THIS SHOULD NOT WORK IF mprotect(PROT_READ) isn't set!
-    jit.dump_mem(); 
+    let time_start = ::std::time::Instant::now();
+    let sum = (jit.get_entry_point_fn())();
+    let time_jit_execute = ::std::time::Instant::now();
+    println!("the returned value is: {}", sum);
+    println!("Execution time: {:?} ns", (time_jit_execute - time_start).subsec_nanos());
 }
