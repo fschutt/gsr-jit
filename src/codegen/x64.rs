@@ -2,12 +2,28 @@
 pub enum Register {
     // Accumulator, { Eax, Ax, Ah, Al }
     Rax,
+    Eax,
+    Ax,
+    Ah,
+    Al,
     // Base, { Ebx, Bx, Bh, Bl }
     Rbx,
+    Ebx,
+    Bx,
+    Bh,
+    Bl,
     // Counter, { Ecx, Cx, Ch, Cl }
     Rcx,
+    Ecx,
+    Cx,
+    Ch,
+    Cl,
     // Data, { Ecx, Cx, Ch, Cl }
     Rdx,
+    Edx,
+    Dx,
+    Dh,
+    Dl,
     // Stack pointer
     Rsp, 
     // Base pointer
@@ -44,9 +60,16 @@ pub enum Register {
 }
 
 impl Register {
-    pub fn get_width(&self) -> u8 {
-        // TODO
-        0
+    pub fn get_width(&self) -> Option<u8> {
+        use self::Register::*;
+        match *self {
+            Rax => Some(64),
+            Eax => Some(32),
+            Ax => Some(16),
+            Ah => Some(8),
+            Al => Some(8),
+            _ => None,
+        }
     }
 }
 

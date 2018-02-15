@@ -1,6 +1,6 @@
 #[start]
 fn something() -> u32 {
-    4
+    100
 }
 
 fn draw_character(character: Char) -> DrawState {

@@ -184,7 +184,7 @@ impl JitMemory {
         }
     }
 
-    pub fn run(&mut self) -> (fn() -> u8) {
+    pub fn run(&mut self) -> (fn() -> u32) {
         unsafe { ::std::mem::transmute(self.memory_ptr) }
     }
 }
