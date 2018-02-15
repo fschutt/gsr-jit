@@ -1,4 +1,8 @@
 #[start]
-fn something() -> GameResult {
-    GameResult::SendMsg(String::from("hello"))
+fn something() -> u32 {
+    4
 }
+
+fn draw_character(character: Char) -> DrawState {
+    DrawState::None
+} 

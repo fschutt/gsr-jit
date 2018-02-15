@@ -35,8 +35,17 @@ impl JitMemory {
         }
     }
 
+    pub fn from_assembly_buf(assembly: &AssemblyBuf) -> Option<Self> {
+        let page_size = page_size::get();
+        let buf_len = assembly.instructions.len();
+        let necessary_pages = (buf_len as f32 / page_size as f32).ceil() as usize;
+        let mut memory = Self::new(necessary_pages)?;
+        memory.load_assembly(assembly).ok()?;
+        Some(memory)
+    }
+
     #[cfg(target_os = "linux")]
-    pub fn new(num_pages: usize) -> Option<JitMemory> {
+    fn new(num_pages: usize) -> Option<Self> {
         let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } = 
             Self::pre_setup(num_pages);
         
@@ -89,7 +98,7 @@ impl JitMemory {
     }
     
     #[cfg(target_os = "windows")]
-    pub fn new(num_pages: usize) -> Option<JitMemory> {
+    fn new(num_pages: usize) -> Option<Self> {
         use winapi::um::memoryapi::{VirtualProtect, VirtualAlloc};
         use winapi::um::winnt::{MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE};
         
@@ -175,7 +184,7 @@ impl JitMemory {
         }
     }
 
-    pub fn get_entry_point_fn(&mut self) -> (fn() -> u8) {
+    pub fn run(&mut self) -> (fn() -> u8) {
         unsafe { ::std::mem::transmute(self.memory_ptr) }
     }
 }
