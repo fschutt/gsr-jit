@@ -26,8 +26,9 @@ const FN_EPILOGUE: [u8;2] = [
 0x5D,                     // pop    rbp
 0xC3                      // ret
 ];
+use std::sync::atomic::AtomicUsize;
 
-static mut GLOBAL_LABEL_ID: usize = 0;
+static mut GLOBAL_LABEL_ID: AtomicUsize = AtomicUsize::new(0);
 
 pub struct AssemblyBuf {
     pub instructions: Vec<u8>,
@@ -146,7 +147,7 @@ pub fn compile(ast: File) -> Option<AssemblyBuf> {
                     let fn_name = FnName(f.ident.clone());
                     let fn_label = GlobalLabel(unsafe { GLOBAL_LABEL_ID });
                     if module_functions_set.contains(&fn_name) {
-                        println!("error: function {:?} declared multiple times", fn_name);
+                        println!("error: {} declared multiple times", fn_name);
                         return None;
                     } else {
                         module_functions_set.insert(fn_name.clone());
@@ -183,7 +184,7 @@ pub fn compile(ast: File) -> Option<AssemblyBuf> {
         }
     }
 
-    println!("\nfunctions in this module:\n");
+    println!("functions in this module:\n");
     for mod_fn in &module_functions {
         println!("\t{}: {}", mod_fn.0, mod_fn.1.display());
     }
@@ -417,6 +418,12 @@ fn assemble_statements(stmts: &Vec<Stmt>, return_type: Option<Ret>, fn_map: &FnM
             _ => { }
         }
     }
+
+    print!("assembly vec: [");
+    for asm in &assembly_vec {
+        print!("0x{:02x} ", asm);
+    }
+    println!("]");
 
     assembly_vec
 }

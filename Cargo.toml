@@ -8,4 +8,5 @@ libc = "0.2.36"
 page_size = "0.4.1"
 syn = { version = "0.12.12", features = ["full", "extra-traits"] }
 winapi = "0.3"
+notify = "4.0.3"
 # quine-mc_cluskey - minimize boolean operations

@@ -161,6 +161,7 @@ impl JitMemory {
         let mut s = String::with_capacity(self.allocated_size);
         let mut page_counter = 0;
         for i in 0..self.allocated_size {
+            if i > 160 { break; }
             if i % self.page_size == 0 {
                 let page_start = unsafe { self.memory_ptr.offset((page_counter * self.page_size) as isize) };
                 write!(&mut s, "\n>>>>> JIT memory - page {} @ 0x{:x}\n", page_counter, page_start as usize).unwrap();
@@ -184,7 +185,7 @@ impl JitMemory {
         }
     }
 
-    pub fn run(&mut self) -> (fn() -> u32) {
+    pub fn run(&mut self) -> (fn() -> u64) {
         unsafe { ::std::mem::transmute(self.memory_ptr) }
     }
 }
