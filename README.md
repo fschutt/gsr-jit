@@ -16,7 +16,8 @@ then execute it (when a game level is loaded). This is important because:
 - Interpreters such as Lua can incur significant overhead when calling across FFI boundaries (function lookup)
 
 GSR can compile a file in less then a millisecond, which is important if you want fast iteration.
-I tried using the official Rust compiler for this and using LLVM, but it doesn't work. LLVM expects you to 
+I tried using the official Rust compiler for this and using LLVM, but it doesn't work, this can not output the
+asm directly, only compile to an ELF binary or similar. 
 
 ## Syntax
 
@@ -47,8 +48,10 @@ let result = (jit.run())();
 println!("the returned number is: {}", result); // prints "500"
 ```
 
-What GSR currently does:
+What GSR currently checks for:
 
+- It checks that a function isn't declared twice in the current scope
+- There must be at least one function with a `#[start]` attribute, otherwise, there'd be no main entry function.
 - It checks that the return type of the function is the same return type of the last expression
 - It uses the `movabs` instructions only if a 64-bit integer is necessary.
 
@@ -68,3 +71,8 @@ A secondary goal is to integrate the JIT with an Entity-Component-System such as
 defining the data models ahead of time, but tweaking the behaviour at runtime. A third goal is to make
 GSR available for modding, but check that the code is not doing anything malicious (no reading or writing files,
 those have to be called from the game engine).
+
+## Roadmap
+
+For now, the next step would be calling sub-functions, if, else and loops, register allocation mechanisms 
+as well as dynamic allocation.
