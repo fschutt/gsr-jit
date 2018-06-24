@@ -19,7 +19,6 @@ pub struct JitMemory {
 struct JitSetup {
     page_size: usize,
     allocation_size_in_bytes: usize,
-    memory_ptr: *mut libc::c_void,
 }
 
 impl JitMemory {
@@ -27,11 +26,9 @@ impl JitMemory {
     fn pre_setup(num_pages: usize) -> JitSetup {
         let page_size = page_size::get();
         let allocation_size_in_bytes = num_pages * page_size;
-        let ptr = ptr::null_mut();
         JitSetup {
             page_size: page_size,
             allocation_size_in_bytes: allocation_size_in_bytes,
-            memory_ptr: ptr,
         }
     }
 
@@ -46,21 +43,21 @@ impl JitMemory {
 
     #[cfg(target_os = "linux")]
     fn new(num_pages: usize) -> Option<Self> {
-        let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } = 
+        let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } =
             Self::pre_setup(num_pages);
-        
+
         let alloc_error = unsafe {
           libc::posix_memalign(&mut memory_ptr, page_size::get(), allocation_size_in_bytes)
         };
 
         match alloc_error {
-            libc::ENOMEM => { 
+            libc::ENOMEM => {
                 println!("recieved ENOMEM: no memory avaliable anymore");
                 return None;
             },
-            libc::EINVAL => { 
-                println!("recieved EINVAL: memory allocation not power of two"); 
-                return None; 
+            libc::EINVAL => {
+                println!("recieved EINVAL: memory allocation not power of two");
+                return None;
             },
             _ => { },
         }
@@ -71,7 +68,7 @@ impl JitMemory {
         }
 
         let mprotect_err = unsafe {
-            libc::mprotect(memory_ptr, allocation_size_in_bytes, 
+            libc::mprotect(memory_ptr, allocation_size_in_bytes,
                            libc::PROT_EXEC | libc::PROT_READ | libc::PROT_WRITE)
         };
 
@@ -96,28 +93,31 @@ impl JitMemory {
             memory_ptr: memory_ptr as *mut u8,
         })
     }
-    
+
     #[cfg(target_os = "windows")]
     fn new(num_pages: usize) -> Option<Self> {
         use winapi::um::memoryapi::{VirtualProtect, VirtualAlloc};
         use winapi::um::winnt::{MEM_RESERVE, MEM_COMMIT, PAGE_EXECUTE_READWRITE};
-        
-        let JitSetup { page_size, allocation_size_in_bytes, mut memory_ptr } = 
-            Self::pre_setup(num_pages);
+        use libc::c_void as LibcCVoid;
 
-        let memory_ptr = VirtualAlloc(0, allocation_size_in_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        let JitSetup { page_size, allocation_size_in_bytes } = Self::pre_setup(num_pages);
+
+        let memory_ptr = unsafe {
+            VirtualAlloc(ptr::null_mut(), allocation_size_in_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+        };
+
         if memory_ptr.is_null() {
             println!("VirtualAlloc failed!");
             return None;
         }
 
         let virtualprotect_err = unsafe {
-            VirtualProtect(memory_ptr, allocation_size_in_bytes, PAGE_EXECUTE_READWRITE, &mut 0 as *mut i32)
+            VirtualProtect(memory_ptr, allocation_size_in_bytes, PAGE_EXECUTE_READWRITE, &mut 0)
         };
 
         if virtualprotect_err == 0 {
             println!("VirtualProtect failed!");
-            unsafe { libc::free(memory_ptr) };
+            unsafe { libc::free(memory_ptr as *mut LibcCVoid) };
             return None;
         }
 
@@ -130,7 +130,7 @@ impl JitMemory {
     }
 
     pub fn get(&self, index: usize) -> Option<&u8> {
-        if index > self.allocated_size { 
+        if index > self.allocated_size {
             None
         } else {
             Some(unsafe { self.get_unchecked(index) })
@@ -138,7 +138,7 @@ impl JitMemory {
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&mut u8> {
-        if index > self.allocated_size { 
+        if index > self.allocated_size {
             None
         } else {
             Some(unsafe { self.get_unchecked_mut(index) })
@@ -172,7 +172,6 @@ impl JitMemory {
             }
             write!(&mut s, "{:02x} ", self[i]).unwrap();
         }
-        println!("{}", s);
     }
 
     pub fn load_assembly(&mut self, data: &AssemblyBuf) -> Result<(), AllocationError> {
@@ -181,11 +180,11 @@ impl JitMemory {
             Err(AllocationError::InstructionBufTooLarge)
         } else {
             unsafe { ptr::copy(data.instructions.as_ptr(), self.memory_ptr, instructions_len) };
-            Ok(())   
+            Ok(())
         }
     }
 
-    pub fn run(&mut self) -> (fn() -> u64) {
+    pub fn run<T>(&self) -> (fn() -> T) {
         unsafe { ::std::mem::transmute(self.memory_ptr) }
     }
 }

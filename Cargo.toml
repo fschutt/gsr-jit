@@ -4,9 +4,11 @@ version = "0.1.0"
 authors = ["Felix Schütt <felix.schuett@maps4print.com>"]
 
 [dependencies]
-libc = "0.2.36"
+libc = "0.2.42"
 page_size = "0.4.1"
-syn = { version = "0.12.12", features = ["full", "extra-traits"] }
-winapi = "0.3"
-notify = "4.0.3"
+syn = { version = "0.14.2", features = ["full", "extra-traits"] }
+winapi = { version = "0.3.5", features = ["memoryapi"] }
 # quine-mc_cluskey - minimize boolean operations
+
+[dev-dependencies]
+notify = "4.0.3"
